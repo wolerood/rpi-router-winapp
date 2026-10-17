@@ -1,2 +1,5 @@
-__pycache__
-.venv
+.venv/
+.venv-current/
+.tmp-pip/
+__pycache__/
+*.pyc

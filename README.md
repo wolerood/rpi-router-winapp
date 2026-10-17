@@ -8,6 +8,9 @@ Windows-клиент для Raspberry Pi Router API.
 - PySide6
 - requests
 
+Используется минимальный пакет `PySide6-Essentials`; WebEngine и PDF-модули
+этому приложению не требуются.
+
 ## Версия 0.2
 
 Реализовано:
