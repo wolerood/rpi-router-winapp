@@ -1,11 +1,17 @@
-import unittest
 import sys
 import types
+import unittest
 
-if "requests" not in sys.modules:
+try:
+    import requests  # noqa: F401
+except ModuleNotFoundError:
     requests_stub = types.ModuleType("requests")
     requests_stub.RequestException = Exception
-    requests_stub.Session = object
+
+    class StubSession:
+        pass
+
+    requests_stub.Session = StubSession
     sys.modules["requests"] = requests_stub
 
 from api_client import ApiClient
@@ -35,6 +41,11 @@ class ApiClientTokenTests(unittest.TestCase):
             api_token="secret-token",
         )
         self.client.session = FakeSession()
+
+    def test_real_session_ignores_system_proxy_settings(self):
+        client = ApiClient("http://192.168.0.2:8080")
+
+        self.assertFalse(client.session.trust_env)
 
     def test_write_request_includes_token(self):
         self.client.create_user("Test")

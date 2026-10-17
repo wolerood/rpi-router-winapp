@@ -13,6 +13,9 @@ class ApiClient:
         self.timeout = timeout
         self.api_token = api_token.strip()
         self.session = requests.Session()
+        # This client talks directly to the router. System proxy settings can
+        # turn local .local requests into misleading 502 responses.
+        self.session.trust_env = False
 
     def set_base_url(self, base_url: str):
         self.base_url = base_url.rstrip("/")
@@ -38,7 +41,9 @@ class ApiClient:
                 **kwargs,
             )
         except requests.RequestException as exc:
-            raise ApiError(f"Ошибка соединения с API: {exc}") from exc
+            raise ApiError(
+                f"Ошибка соединения с API ({method} {url}): {exc}"
+            ) from exc
 
         try:
             data = response.json()
@@ -49,7 +54,7 @@ class ApiClient:
             if isinstance(data, dict) and "error" in data:
                 message = data["error"]
             else:
-                message = f"HTTP {response.status_code}"
+                message = f"HTTP {response.status_code}: {method} {url}"
 
             raise ApiError(message)
 
