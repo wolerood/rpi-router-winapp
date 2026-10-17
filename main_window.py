@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTime, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +35,16 @@ ACCESS_MODE_VALUES = {
     "По расписанию": "schedule",
     "Всегда разрешать": "always_allow",
     "Всегда блокировать": "always_block",
+}
+
+WEEKDAYS = {
+    1: "Понедельник",
+    2: "Вторник",
+    3: "Среда",
+    4: "Четверг",
+    5: "Пятница",
+    6: "Суббота",
+    7: "Воскресенье",
 }
 
 
@@ -57,6 +68,7 @@ class MainWindow(QMainWindow):
         self.users = []
         self.devices = []
         self.clients = []
+        self.schedules = []
 
         self.api_url_edit = QLineEdit(api_url)
         self.api_token_edit = QLineEdit(api_token)
@@ -85,10 +97,12 @@ class MainWindow(QMainWindow):
 
         self.devices_tab = self.create_devices_tab()
         self.clients_tab = self.create_clients_tab()
+        self.schedules_tab = self.create_schedules_tab()
 
         self.tabs.addTab(self.users_tab, "Пользователи")
         self.tabs.addTab(self.devices_tab, "Устройства")
         self.tabs.addTab(self.clients_tab, "Обнаруженные")
+        self.tabs.addTab(self.schedules_tab, "Расписание")
 
         root_layout = QVBoxLayout()
         root_layout.addLayout(connection_layout)
@@ -274,6 +288,54 @@ class MainWindow(QMainWindow):
         self.set_client_controls_enabled(False)
         return widget
 
+    def create_schedules_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        editor_layout = QGridLayout()
+        self.schedule_user_combo = QComboBox()
+        self.schedule_weekday_combo = QComboBox()
+        for weekday, name in WEEKDAYS.items():
+            self.schedule_weekday_combo.addItem(name, weekday)
+
+        self.schedule_start_edit = QTimeEdit(QTime(8, 0))
+        self.schedule_end_edit = QTimeEdit(QTime(20, 0))
+        for time_edit in (self.schedule_start_edit, self.schedule_end_edit):
+            time_edit.setDisplayFormat("HH:mm")
+
+        self.add_schedule_button = QPushButton("Создать")
+        self.update_schedule_button = QPushButton("Сохранить изменения")
+        self.delete_schedule_button = QPushButton("Удалить")
+        self.add_schedule_button.clicked.connect(self.add_schedule)
+        self.update_schedule_button.clicked.connect(self.update_schedule)
+        self.delete_schedule_button.clicked.connect(self.delete_schedule)
+
+        editor_layout.addWidget(QLabel("Пользователь:"), 0, 0)
+        editor_layout.addWidget(self.schedule_user_combo, 0, 1)
+        editor_layout.addWidget(QLabel("День недели:"), 0, 2)
+        editor_layout.addWidget(self.schedule_weekday_combo, 0, 3)
+        editor_layout.addWidget(QLabel("Начало:"), 1, 0)
+        editor_layout.addWidget(self.schedule_start_edit, 1, 1)
+        editor_layout.addWidget(QLabel("Окончание:"), 1, 2)
+        editor_layout.addWidget(self.schedule_end_edit, 1, 3)
+        editor_layout.addWidget(self.add_schedule_button, 2, 1)
+        editor_layout.addWidget(self.update_schedule_button, 2, 2)
+        editor_layout.addWidget(self.delete_schedule_button, 2, 3)
+
+        self.schedules_table = self.create_table(
+            ["ID", "Пользователь", "День недели", "Начало", "Окончание"]
+        )
+        self.schedules_table.itemSelectionChanged.connect(
+            self.on_schedule_selection_changed
+        )
+
+        layout.addLayout(editor_layout)
+        layout.addWidget(self.schedules_table, 1)
+        widget.setLayout(layout)
+
+        self.set_schedule_controls_enabled(False)
+        return widget
+
     @staticmethod
     def create_table(headers):
         table = QTableWidget(0, len(headers))
@@ -343,10 +405,12 @@ class MainWindow(QMainWindow):
             self.users = self.api.get_users()
             self.devices = self.api.get_devices()
             self.clients = self.api.get_clients()
+            self.schedules = self.api.get_schedules()
 
             self.fill_users()
             self.fill_devices()
             self.fill_clients()
+            self.fill_schedules()
 
         except ApiError as exc:
             self.show_api_error(exc)
@@ -356,7 +420,8 @@ class MainWindow(QMainWindow):
                 f"Получено: "
                 f"{len(self.users)} пользователей, "
                 f"{len(self.devices)} устройств, "
-                f"{len(self.clients)} клиентов"
+                f"{len(self.clients)} клиентов, "
+                f"{len(self.schedules)} записей расписания"
             )
         finally:
             self.refresh_button.setEnabled(True)
@@ -415,7 +480,11 @@ class MainWindow(QMainWindow):
             self.clear_selected_user()
 
     def fill_device_owner_combo(self):
-        for combo in (self.device_owner_combo, self.client_owner_combo):
+        for combo in (
+            self.device_owner_combo,
+            self.client_owner_combo,
+            self.schedule_user_combo,
+        ):
             current_user_id = combo.currentData()
             combo.clear()
 
@@ -428,6 +497,8 @@ class MainWindow(QMainWindow):
             current_index = combo.findData(current_user_id)
             if current_index >= 0:
                 combo.setCurrentIndex(current_index)
+
+        self.add_schedule_button.setEnabled(bool(self.users))
 
     def fill_devices(self):
         selected = self.selected_device()
@@ -528,6 +599,38 @@ class MainWindow(QMainWindow):
             self.clients_table.clearSelection()
             self.clear_selected_client()
 
+    def fill_schedules(self, select_schedule_id=None):
+        if select_schedule_id is None:
+            selected = self.selected_schedule()
+            select_schedule_id = selected.get("id") if selected else None
+
+        self.schedules_table.blockSignals(True)
+        self.schedules_table.setRowCount(len(self.schedules))
+        selected_row = None
+
+        for row, schedule in enumerate(self.schedules):
+            self.set_item(self.schedules_table, row, 0, schedule.get("id"))
+            self.set_item(self.schedules_table, row, 1, schedule.get("user"))
+            self.set_item(
+                self.schedules_table,
+                row,
+                2,
+                WEEKDAYS.get(schedule.get("weekday"), schedule.get("weekday")),
+            )
+            self.set_item(self.schedules_table, row, 3, schedule.get("start"))
+            self.set_item(self.schedules_table, row, 4, schedule.get("end"))
+
+            if schedule.get("id") == select_schedule_id:
+                selected_row = row
+
+        self.schedules_table.blockSignals(False)
+
+        if selected_row is not None:
+            self.schedules_table.selectRow(selected_row)
+        else:
+            self.schedules_table.clearSelection()
+            self.set_schedule_controls_enabled(False)
+
     def selected_user(self):
         row = self.users_table.currentRow()
 
@@ -576,6 +679,141 @@ class MainWindow(QMainWindow):
             ),
             None,
         )
+
+    def selected_schedule(self):
+        row = self.schedules_table.currentRow()
+
+        if row < 0:
+            return None
+
+        id_item = self.schedules_table.item(row, 0)
+        if id_item is None:
+            return None
+
+        try:
+            schedule_id = int(id_item.text())
+        except ValueError:
+            return None
+
+        return next(
+            (
+                schedule
+                for schedule in self.schedules
+                if schedule.get("id") == schedule_id
+            ),
+            None,
+        )
+
+    def on_schedule_selection_changed(self):
+        schedule = self.selected_schedule()
+
+        if schedule is None:
+            self.set_schedule_controls_enabled(False)
+            return
+
+        user_index = self.schedule_user_combo.findData(schedule.get("user_id"))
+        weekday_index = self.schedule_weekday_combo.findData(
+            schedule.get("weekday")
+        )
+        if user_index >= 0:
+            self.schedule_user_combo.setCurrentIndex(user_index)
+        if weekday_index >= 0:
+            self.schedule_weekday_combo.setCurrentIndex(weekday_index)
+
+        start = QTime.fromString(schedule.get("start", ""), "HH:mm")
+        end = QTime.fromString(schedule.get("end", ""), "HH:mm")
+        if start.isValid():
+            self.schedule_start_edit.setTime(start)
+        if end.isValid():
+            self.schedule_end_edit.setTime(end)
+
+        self.set_schedule_controls_enabled(True)
+
+    def set_schedule_controls_enabled(self, schedule_selected):
+        has_users = bool(self.users)
+        self.schedule_user_combo.setEnabled(has_users)
+        self.schedule_weekday_combo.setEnabled(has_users)
+        self.schedule_start_edit.setEnabled(has_users)
+        self.schedule_end_edit.setEnabled(has_users)
+        self.add_schedule_button.setEnabled(has_users)
+        self.update_schedule_button.setEnabled(
+            has_users and schedule_selected
+        )
+        self.delete_schedule_button.setEnabled(schedule_selected)
+
+    def schedule_form_values(self):
+        return {
+            "user_id": self.schedule_user_combo.currentData(),
+            "weekday": self.schedule_weekday_combo.currentData(),
+            "start": self.schedule_start_edit.time().toString("HH:mm"),
+            "end": self.schedule_end_edit.time().toString("HH:mm"),
+        }
+
+    def refresh_schedules(self, select_schedule_id=None):
+        self.schedules = self.api.get_schedules()
+        self.fill_schedules(select_schedule_id)
+
+    def add_schedule(self):
+        values = self.schedule_form_values()
+        if values["user_id"] is None:
+            return
+
+        try:
+            self.prepare_api()
+            created = self.api.create_schedule(**values)
+            self.refresh_schedules(created.get("id"))
+        except ApiError as exc:
+            self.show_api_error(exc)
+            return
+
+        self.statusBar().showMessage("Запись расписания создана")
+
+    def update_schedule(self):
+        schedule = self.selected_schedule()
+        if schedule is None:
+            return
+
+        try:
+            self.prepare_api()
+            self.api.update_schedule(schedule["id"], **self.schedule_form_values())
+            self.refresh_schedules(schedule["id"])
+        except ApiError as exc:
+            self.show_api_error(exc)
+            return
+
+        self.statusBar().showMessage("Запись расписания обновлена")
+
+    def delete_schedule(self):
+        schedule = self.selected_schedule()
+        if schedule is None:
+            return
+
+        weekday = WEEKDAYS.get(
+            schedule.get("weekday"),
+            schedule.get("weekday"),
+        )
+        answer = QMessageBox.question(
+            self,
+            "Удаление расписания",
+            f"Удалить запись для «{schedule.get('user')}»?\n\n"
+            f"{weekday}, {schedule.get('start')}–{schedule.get('end')}",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            self.prepare_api()
+            self.api.delete_schedule(schedule["id"])
+            self.refresh_schedules()
+        except ApiError as exc:
+            self.show_api_error(exc)
+            return
+
+        self.statusBar().showMessage("Запись расписания удалена")
 
     def on_device_selection_changed(self):
         device = self.selected_device()

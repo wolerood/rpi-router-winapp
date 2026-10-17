@@ -84,6 +84,52 @@ class ApiClientTokenTests(unittest.TestCase):
         self.assertEqual(url, "http://router:8080/devices/12")
         self.assertEqual(kwargs["json"], {"user_id": 9})
 
+    def test_create_schedule_sends_iso_weekday_and_times(self):
+        self.client.create_schedule(7, 1, "08:30", "20:15")
+
+        method, url, kwargs = self.client.session.calls[0]
+        self.assertEqual(method, "POST")
+        self.assertEqual(url, "http://router:8080/schedules")
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "user_id": 7,
+                "weekday": 1,
+                "start": "08:30",
+                "end": "20:15",
+            },
+        )
+
+    def test_update_schedule_sends_all_edited_fields(self):
+        self.client.update_schedule(
+            15,
+            user_id=9,
+            weekday=7,
+            start="10:00",
+            end="22:00",
+        )
+
+        method, url, kwargs = self.client.session.calls[0]
+        self.assertEqual(method, "PATCH")
+        self.assertEqual(url, "http://router:8080/schedules/15")
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "user_id": 9,
+                "weekday": 7,
+                "start": "10:00",
+                "end": "22:00",
+            },
+        )
+
+    def test_delete_schedule_uses_selected_schedule_id(self):
+        self.client.delete_schedule(15)
+
+        method, url, kwargs = self.client.session.calls[0]
+        self.assertEqual(method, "DELETE")
+        self.assertEqual(url, "http://router:8080/schedules/15")
+        self.assertEqual(kwargs["headers"]["X-API-Token"], "secret-token")
+
 
 if __name__ == "__main__":
     unittest.main()
