@@ -83,29 +83,12 @@ class MainWindow(QMainWindow):
 
         self.users_tab = self.create_users_tab()
 
-        self.devices_table = self.create_table(
-            ["ID", "Пользователь", "Имя устройства", "MAC"]
-        )
-        self.clients_table = self.create_table(
-            [
-                "Online",
-                "DHCP-имя",
-                "IP",
-                "MAC",
-                "Имя в системе",
-                "Пользователь",
-            ]
-        )
+        self.devices_tab = self.create_devices_tab()
+        self.clients_tab = self.create_clients_tab()
 
         self.tabs.addTab(self.users_tab, "Пользователи")
-        self.tabs.addTab(
-            self.wrap_table(self.devices_table),
-            "Устройства",
-        )
-        self.tabs.addTab(
-            self.wrap_table(self.clients_table),
-            "Обнаруженные",
-        )
+        self.tabs.addTab(self.devices_tab, "Устройства")
+        self.tabs.addTab(self.clients_tab, "Обнаруженные")
 
         root_layout = QVBoxLayout()
         root_layout.addLayout(connection_layout)
@@ -222,6 +205,73 @@ class MainWindow(QMainWindow):
 
         self.set_user_controls_enabled(False)
 
+        return widget
+
+    def create_devices_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        assignment_layout = QHBoxLayout()
+        self.device_owner_label = QLabel("Устройство не выбрано")
+        self.device_owner_combo = QComboBox()
+        self.assign_device_button = QPushButton("Назначить пользователя")
+        self.assign_device_button.clicked.connect(self.assign_device_owner)
+
+        assignment_layout.addWidget(self.device_owner_label)
+        assignment_layout.addStretch()
+        assignment_layout.addWidget(QLabel("Владелец:"))
+        assignment_layout.addWidget(self.device_owner_combo)
+        assignment_layout.addWidget(self.assign_device_button)
+
+        self.devices_table = self.create_table(
+            ["ID", "Пользователь", "Имя устройства", "MAC"]
+        )
+        self.devices_table.itemSelectionChanged.connect(
+            self.on_device_selection_changed
+        )
+
+        layout.addLayout(assignment_layout)
+        layout.addWidget(self.devices_table, 1)
+        widget.setLayout(layout)
+
+        self.set_device_controls_enabled(False)
+        return widget
+
+    def create_clients_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        assignment_layout = QHBoxLayout()
+        self.client_owner_label = QLabel("Устройство не выбрано")
+        self.client_owner_combo = QComboBox()
+        self.assign_client_button = QPushButton("Назначить пользователя")
+        self.assign_client_button.clicked.connect(self.assign_client_owner)
+
+        assignment_layout.addWidget(self.client_owner_label)
+        assignment_layout.addStretch()
+        assignment_layout.addWidget(QLabel("Владелец:"))
+        assignment_layout.addWidget(self.client_owner_combo)
+        assignment_layout.addWidget(self.assign_client_button)
+
+        self.clients_table = self.create_table(
+            [
+                "Online",
+                "DHCP-имя",
+                "IP",
+                "MAC",
+                "Имя в системе",
+                "Пользователь",
+            ]
+        )
+        self.clients_table.itemSelectionChanged.connect(
+            self.on_client_selection_changed
+        )
+
+        layout.addLayout(assignment_layout)
+        layout.addWidget(self.clients_table, 1)
+        widget.setLayout(layout)
+
+        self.set_client_controls_enabled(False)
         return widget
 
     @staticmethod
@@ -356,6 +406,7 @@ class MainWindow(QMainWindow):
                 selected_row = row
 
         self.users_table.blockSignals(False)
+        self.fill_device_owner_combo()
 
         if selected_row is not None:
             self.users_table.selectRow(selected_row)
@@ -363,8 +414,26 @@ class MainWindow(QMainWindow):
             self.users_table.clearSelection()
             self.clear_selected_user()
 
+    def fill_device_owner_combo(self):
+        for combo in (self.device_owner_combo, self.client_owner_combo):
+            current_user_id = combo.currentData()
+            combo.clear()
+
+            for user in self.users:
+                combo.addItem(
+                    user.get("name", ""),
+                    user.get("id"),
+                )
+
+            current_index = combo.findData(current_user_id)
+            if current_index >= 0:
+                combo.setCurrentIndex(current_index)
+
     def fill_devices(self):
+        selected = self.selected_device()
+        selected_device_id = selected.get("id") if selected else None
         self.devices_table.setRowCount(len(self.devices))
+        selected_row = None
 
         for row, device in enumerate(self.devices):
             self.set_item(
@@ -392,8 +461,20 @@ class MainWindow(QMainWindow):
                 device.get("mac"),
             )
 
+            if device.get("id") == selected_device_id:
+                selected_row = row
+
+        if selected_row is not None:
+            self.devices_table.selectRow(selected_row)
+        else:
+            self.devices_table.clearSelection()
+            self.clear_selected_device()
+
     def fill_clients(self):
+        selected = self.selected_client()
+        selected_mac = selected.get("mac") if selected else None
         self.clients_table.setRowCount(len(self.clients))
+        selected_row = None
 
         for row, client in enumerate(self.clients):
             online = client.get("online", False)
@@ -436,6 +517,17 @@ class MainWindow(QMainWindow):
                 client.get("owner"),
             )
 
+            if str(client.get("mac", "")).lower() == str(
+                selected_mac or ""
+            ).lower():
+                selected_row = row
+
+        if selected_row is not None:
+            self.clients_table.selectRow(selected_row)
+        else:
+            self.clients_table.clearSelection()
+            self.clear_selected_client()
+
     def selected_user(self):
         row = self.users_table.currentRow()
 
@@ -459,6 +551,185 @@ class MainWindow(QMainWindow):
                 if user.get("id") == user_id
             ),
             None,
+        )
+
+    def selected_device(self):
+        row = self.devices_table.currentRow()
+
+        if row < 0:
+            return None
+
+        id_item = self.devices_table.item(row, 0)
+        if id_item is None:
+            return None
+
+        try:
+            device_id = int(id_item.text())
+        except ValueError:
+            return None
+
+        return next(
+            (
+                device
+                for device in self.devices
+                if device.get("id") == device_id
+            ),
+            None,
+        )
+
+    def on_device_selection_changed(self):
+        device = self.selected_device()
+
+        if device is None:
+            self.clear_selected_device()
+            return
+
+        self.set_device_controls_enabled(True)
+        self.device_owner_label.setText(
+            f"{device.get('name')} ({device.get('mac')})"
+        )
+
+        user_index = self.device_owner_combo.findData(device.get("user_id"))
+        if user_index >= 0:
+            self.device_owner_combo.setCurrentIndex(user_index)
+
+    def clear_selected_device(self):
+        self.device_owner_label.setText("Устройство не выбрано")
+        self.set_device_controls_enabled(False)
+
+    def set_device_controls_enabled(self, enabled):
+        has_users = bool(self.users)
+        self.device_owner_combo.setEnabled(enabled and has_users)
+        self.assign_device_button.setEnabled(enabled and has_users)
+
+    def assign_device_owner(self):
+        device = self.selected_device()
+        user_id = self.device_owner_combo.currentData()
+
+        if device is None or user_id is None:
+            return
+
+        try:
+            self.prepare_api()
+            updated = self.api.update_device(
+                device["id"],
+                user_id=user_id,
+            )
+            self.devices = self.api.get_devices()
+        except ApiError as exc:
+            self.show_api_error(exc)
+            return
+
+        self.fill_devices()
+        self.statusBar().showMessage(
+            f"Устройство «{updated.get('name')}» назначено "
+            f"пользователю «{updated.get('user')}»"
+        )
+
+    def selected_client(self):
+        row = self.clients_table.currentRow()
+
+        if row < 0:
+            return None
+
+        mac_item = self.clients_table.item(row, 3)
+        if mac_item is None:
+            return None
+
+        mac = mac_item.text().lower()
+        return next(
+            (
+                client
+                for client in self.clients
+                if str(client.get("mac", "")).lower() == mac
+            ),
+            None,
+        )
+
+    def on_client_selection_changed(self):
+        client = self.selected_client()
+
+        if client is None:
+            self.clear_selected_client()
+            return
+
+        self.client_owner_label.setText(
+            f"{client.get('name')} ({client.get('mac')})"
+        )
+        self.set_client_controls_enabled(True)
+
+        device = self.device_by_mac(client.get("mac"))
+        if device is not None:
+            user_index = self.client_owner_combo.findData(
+                device.get("user_id")
+            )
+            if user_index >= 0:
+                self.client_owner_combo.setCurrentIndex(user_index)
+
+    def clear_selected_client(self):
+        self.client_owner_label.setText("Устройство не выбрано")
+        self.set_client_controls_enabled(False)
+
+    def set_client_controls_enabled(self, enabled):
+        has_users = bool(self.users)
+        self.client_owner_combo.setEnabled(enabled and has_users)
+        self.assign_client_button.setEnabled(enabled and has_users)
+
+    def device_by_mac(self, mac):
+        normalized_mac = str(mac or "").lower()
+        return next(
+            (
+                device
+                for device in self.devices
+                if str(device.get("mac", "")).lower() == normalized_mac
+            ),
+            None,
+        )
+
+    def assign_client_owner(self):
+        client = self.selected_client()
+        user_id = self.client_owner_combo.currentData()
+
+        if client is None or user_id is None:
+            return
+
+        try:
+            self.prepare_api()
+            device = self.device_by_mac(client.get("mac"))
+
+            if device is None:
+                updated = self.api.create_device(
+                    user_id,
+                    client.get("mac"),
+                    client.get("device_name")
+                    or client.get("name")
+                    or client.get("mac"),
+                )
+            else:
+                updated = self.api.update_device(
+                    device["id"],
+                    user_id=user_id,
+                )
+
+            self.devices = self.api.get_devices()
+            self.clients = self.api.get_clients()
+        except ApiError as exc:
+            self.show_api_error(exc)
+            return
+
+        self.fill_devices()
+        self.fill_clients()
+        owner = next(
+            (
+                user.get("name")
+                for user in self.users
+                if user.get("id") == user_id
+            ),
+            "",
+        )
+        self.statusBar().showMessage(
+            f"Устройство «{updated.get('name')}» назначено "
+            f"пользователю «{owner}»"
         )
 
     def on_user_selection_changed(self):

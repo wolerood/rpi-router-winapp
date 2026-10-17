@@ -61,6 +61,29 @@ class ApiClientTokenTests(unittest.TestCase):
         self.assertEqual(method, "GET")
         self.assertNotIn("headers", kwargs)
 
+    def test_create_device_assigns_one_user(self):
+        self.client.create_device(7, "aa:bb:cc:dd:ee:ff", "Phone")
+
+        method, url, kwargs = self.client.session.calls[0]
+        self.assertEqual(method, "POST")
+        self.assertEqual(url, "http://router:8080/devices")
+        self.assertEqual(
+            kwargs["json"],
+            {
+                "user_id": 7,
+                "mac": "aa:bb:cc:dd:ee:ff",
+                "name": "Phone",
+            },
+        )
+
+    def test_update_device_reassigns_user(self):
+        self.client.update_device(12, user_id=9)
+
+        method, url, kwargs = self.client.session.calls[0]
+        self.assertEqual(method, "PATCH")
+        self.assertEqual(url, "http://router:8080/devices/12")
+        self.assertEqual(kwargs["json"], {"user_id": 9})
+
 
 if __name__ == "__main__":
     unittest.main()
