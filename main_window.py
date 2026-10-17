@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
 )
 
 from api_client import ApiClient, ApiError
-from config import DEFAULT_API_TOKEN, DEFAULT_API_URL, REQUEST_TIMEOUT
+from config import REQUEST_TIMEOUT
+from settings import ClientSettings
 
 
 ACCESS_MODE_TEXT = {
@@ -37,26 +38,36 @@ ACCESS_MODE_VALUES = {
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings=None):
         super().__init__()
+
+        self.settings = settings or ClientSettings()
+        api_url = self.settings.api_url()
+        api_token = self.settings.api_token()
 
         self.setWindowTitle("RPi Router Control")
         self.resize(1150, 700)
 
         self.api = ApiClient(
-            DEFAULT_API_URL,
+            api_url,
             timeout=REQUEST_TIMEOUT,
-            api_token=DEFAULT_API_TOKEN,
+            api_token=api_token,
         )
 
         self.users = []
         self.devices = []
         self.clients = []
 
-        self.api_url_edit = QLineEdit(DEFAULT_API_URL)
-        self.api_token_edit = QLineEdit(DEFAULT_API_TOKEN)
+        self.api_url_edit = QLineEdit(api_url)
+        self.api_token_edit = QLineEdit(api_token)
         self.api_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_token_edit.setPlaceholderText("Нужен для изменений")
+        self.api_url_edit.editingFinished.connect(
+            self.save_connection_settings
+        )
+        self.api_token_edit.editingFinished.connect(
+            self.save_connection_settings
+        )
 
         self.refresh_button = QPushButton("Обновить всё")
         self.refresh_button.clicked.connect(self.refresh_all)
@@ -260,6 +271,17 @@ class MainWindow(QMainWindow):
 
         self.api.set_base_url(base_url)
         self.api.set_api_token(self.api_token_edit.text())
+        self.save_connection_settings()
+
+    def save_connection_settings(self):
+        self.settings.save_connection(
+            self.api_url_edit.text(),
+            self.api_token_edit.text(),
+        )
+
+    def closeEvent(self, event):
+        self.save_connection_settings()
+        super().closeEvent(event)
 
     def refresh_all(self):
         self.refresh_button.setEnabled(False)
