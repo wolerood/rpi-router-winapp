@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from api_client import ApiClient, ApiError
-from config import DEFAULT_API_URL, REQUEST_TIMEOUT
+from config import DEFAULT_API_TOKEN, DEFAULT_API_URL, REQUEST_TIMEOUT
 
 
 ACCESS_MODE_TEXT = {
@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self.api = ApiClient(
             DEFAULT_API_URL,
             timeout=REQUEST_TIMEOUT,
+            api_token=DEFAULT_API_TOKEN,
         )
 
         self.users = []
@@ -53,6 +54,9 @@ class MainWindow(QMainWindow):
         self.clients = []
 
         self.api_url_edit = QLineEdit(DEFAULT_API_URL)
+        self.api_token_edit = QLineEdit(DEFAULT_API_TOKEN)
+        self.api_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_token_edit.setPlaceholderText("Нужен для изменений")
 
         self.refresh_button = QPushButton("Обновить всё")
         self.refresh_button.clicked.connect(self.refresh_all)
@@ -60,6 +64,8 @@ class MainWindow(QMainWindow):
         connection_layout = QHBoxLayout()
         connection_layout.addWidget(QLabel("API:"))
         connection_layout.addWidget(self.api_url_edit, 1)
+        connection_layout.addWidget(QLabel("Токен:"))
+        connection_layout.addWidget(self.api_token_edit, 1)
         connection_layout.addWidget(self.refresh_button)
 
         self.tabs = QTabWidget()
@@ -253,6 +259,7 @@ class MainWindow(QMainWindow):
             raise ApiError("Введите адрес API Raspberry Pi.")
 
         self.api.set_base_url(base_url)
+        self.api.set_api_token(self.api_token_edit.text())
 
     def refresh_all(self):
         self.refresh_button.setEnabled(False)

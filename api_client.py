@@ -6,16 +6,29 @@ class ApiError(Exception):
 
 
 class ApiClient:
-    def __init__(self, base_url: str, timeout: int = 3):
+    WRITE_METHODS = {"POST", "PATCH", "DELETE"}
+
+    def __init__(self, base_url: str, timeout: int = 3, api_token: str = ""):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.api_token = api_token.strip()
         self.session = requests.Session()
 
     def set_base_url(self, base_url: str):
         self.base_url = base_url.rstrip("/")
 
+    def set_api_token(self, api_token: str):
+        self.api_token = api_token.strip()
+
     def _request(self, method: str, path: str, **kwargs):
         url = f"{self.base_url}{path}"
+        method = method.upper()
+
+        if method in self.WRITE_METHODS:
+            headers = dict(kwargs.pop("headers", {}))
+            if self.api_token:
+                headers["X-API-Token"] = self.api_token
+            kwargs["headers"] = headers
 
         try:
             response = self.session.request(
