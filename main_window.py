@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from api_client import ApiClient, ApiError
 from config import REQUEST_TIMEOUT
 from settings import ClientSettings
+from schedule_grid import ScheduleGrid, schedules_to_slots, slots_to_intervals
 
 
 ACCESS_MODE_TEXT = {
@@ -98,11 +99,13 @@ class MainWindow(QMainWindow):
         self.devices_tab = self.create_devices_tab()
         self.clients_tab = self.create_clients_tab()
         self.schedules_tab = self.create_schedules_tab()
+        self.visual_schedule_tab = self.create_visual_schedule_tab()
 
         self.tabs.addTab(self.users_tab, "Пользователи")
         self.tabs.addTab(self.devices_tab, "Устройства")
         self.tabs.addTab(self.clients_tab, "Обнаруженные")
         self.tabs.addTab(self.schedules_tab, "Расписание")
+        self.tabs.addTab(self.visual_schedule_tab, "Визуальное расписание")
 
         root_layout = QVBoxLayout()
         root_layout.addLayout(connection_layout)
@@ -336,6 +339,80 @@ class MainWindow(QMainWindow):
         self.set_schedule_controls_enabled(False)
         return widget
 
+    def create_visual_schedule_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        title_row = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("Расписание доступа в интернет")
+        title.setStyleSheet(
+            "font-size: 25px; font-weight: 700; color: #0c1228;"
+        )
+        subtitle = QLabel("Выберите, когда разрешить доступ к интернету")
+        subtitle.setStyleSheet("font-size: 15px; color: #71809f;")
+        title_box.addWidget(title)
+        title_box.addWidget(subtitle)
+        legend = QLabel("■  Зелёный — разрешить")
+        legend.setStyleSheet(
+            "background: #f1f4f9; color: #40506d; padding: 12px 16px;"
+            "border-radius: 10px; font-weight: 600;"
+        )
+        title_row.addLayout(title_box)
+        title_row.addStretch()
+        title_row.addWidget(legend)
+
+        toolbar = QHBoxLayout()
+        self.visual_schedule_user_combo = QComboBox()
+        self.visual_schedule_user_combo.currentIndexChanged.connect(
+            self.load_visual_schedule
+        )
+        self.visual_schedule_save_button = QPushButton("Сохранить расписание")
+        self.visual_schedule_save_button.clicked.connect(
+            self.save_visual_schedule
+        )
+        self.visual_schedule_reload_button = QPushButton("Отменить изменения")
+        self.visual_schedule_reload_button.clicked.connect(
+            self.load_visual_schedule
+        )
+        toolbar.addWidget(QLabel("Пользователь:"))
+        toolbar.addWidget(self.visual_schedule_user_combo)
+        toolbar.addStretch()
+        toolbar.addWidget(self.visual_schedule_reload_button)
+        toolbar.addWidget(self.visual_schedule_save_button)
+
+        hint = QLabel(
+            "Нажимайте на ячейки, чтобы разрешить или запретить доступ "
+            "на выбранные 30 минут."
+        )
+        self.visual_schedule_grid = ScheduleGrid()
+
+        periods = QHBoxLayout()
+        periods.setSpacing(6)
+        periods.addSpacing(75)
+        morning = QLabel("00:00 — 12:00")
+        evening = QLabel("12:00 — 00:00")
+        for label, color in (
+            (morning, "#eef6ff"),
+            (evening, "#fff8ed"),
+        ):
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet(
+                f"background: {color}; color: #11182e; padding: 10px;"
+                "border: 1px solid #e2e8f1; border-radius: 10px;"
+                "font-size: 17px; font-weight: 700;"
+            )
+            periods.addWidget(label, 1)
+
+        layout.addLayout(title_row)
+        layout.addLayout(toolbar)
+        layout.addWidget(hint)
+        layout.addLayout(periods)
+        layout.addWidget(self.visual_schedule_grid, 1)
+        widget.setLayout(layout)
+        self.set_visual_schedule_controls_enabled(False)
+        return widget
+
     @staticmethod
     def create_table(headers):
         table = QTableWidget(0, len(headers))
@@ -484,6 +561,7 @@ class MainWindow(QMainWindow):
             self.device_owner_combo,
             self.client_owner_combo,
             self.schedule_user_combo,
+            self.visual_schedule_user_combo,
         ):
             current_user_id = combo.currentData()
             combo.clear()
@@ -499,6 +577,8 @@ class MainWindow(QMainWindow):
                 combo.setCurrentIndex(current_index)
 
         self.add_schedule_button.setEnabled(bool(self.users))
+        self.set_visual_schedule_controls_enabled(bool(self.users))
+        self.load_visual_schedule()
 
     def fill_devices(self):
         selected = self.selected_device()
@@ -630,6 +710,57 @@ class MainWindow(QMainWindow):
         else:
             self.schedules_table.clearSelection()
             self.set_schedule_controls_enabled(False)
+
+        self.load_visual_schedule()
+
+    def set_visual_schedule_controls_enabled(self, enabled):
+        self.visual_schedule_user_combo.setEnabled(enabled)
+        self.visual_schedule_grid.setEnabled(enabled)
+        self.visual_schedule_save_button.setEnabled(enabled)
+        self.visual_schedule_reload_button.setEnabled(enabled)
+
+    def load_visual_schedule(self, *_args):
+        user_id = self.visual_schedule_user_combo.currentData()
+        self.set_visual_schedule_controls_enabled(user_id is not None)
+        if user_id is None:
+            self.visual_schedule_grid.set_slots(
+                [[False for _ in range(7)] for _ in range(48)]
+            )
+            return
+        self.visual_schedule_grid.set_slots(
+            schedules_to_slots(self.schedules, user_id)
+        )
+
+    def save_visual_schedule(self):
+        user_id = self.visual_schedule_user_combo.currentData()
+        if user_id is None:
+            return
+
+        existing = [
+            schedule for schedule in self.schedules
+            if schedule.get("user_id") == user_id
+        ]
+        desired = slots_to_intervals(self.visual_schedule_grid.slots())
+
+        try:
+            self.prepare_api()
+            # Reuse existing rows where possible, create additional rows before
+            # deleting surplus ones so an error cannot first erase everything.
+            shared_count = min(len(existing), len(desired))
+            for index in range(shared_count):
+                self.api.update_schedule(
+                    existing[index]["id"], user_id=user_id, **desired[index]
+                )
+            for interval in desired[shared_count:]:
+                self.api.create_schedule(user_id=user_id, **interval)
+            for schedule in existing[shared_count:]:
+                self.api.delete_schedule(schedule["id"])
+            self.refresh_schedules()
+        except ApiError as exc:
+            self.show_api_error(exc)
+            return
+
+        self.statusBar().showMessage("Визуальное расписание сохранено")
 
     def selected_user(self):
         row = self.users_table.currentRow()
